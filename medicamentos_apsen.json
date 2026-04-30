@@ -1,0 +1,53 @@
+{
+    "medicamentos": [
+        {
+            "id": 1,
+            "nome_oficial": "Alois (Apsen)",
+            "variantes": [
+                "Alois",
+                "Alois Duo",
+                "Alois 5mg",
+                "Alois 10mg",
+                "ALOIS"
+            ],
+            "ean": "7896637023818"
+        },
+        {
+            "id": 2,
+            "nome_oficial": "Dipirona (Generico)",
+            "variantes": [
+                "Dipirona",
+                "Dipirona Sódica",
+                "Dipirona 500mg",
+                "DIPIRONA",
+                "DIPIRONA SODICA"
+            ],
+            "ean": "7896422505963"
+        },
+        {
+            "id": 3,
+            "nome_oficial": "Flancox (Apsen)",
+            "variantes": [
+                "Flancox",
+                "Flancox 300mg",
+                "Flancox 400mg",
+                "Flancox 500mg",
+                "FLANCOX"
+            ],
+            "ean": "7896637021579"
+        },
+        {
+            "id": 4,
+            "nome_oficial": "Miosan (Apsen)",
+            "variantes": [
+                "Miosan",
+                "Miosan 5mg",
+                "Miosan 10mg",
+                "Miosan Caf",
+                "Miosan ODT",
+                "MIOSAN"
+            ],
+            "ean": "7896637023122"
+        }
+    ]
+}
