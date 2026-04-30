@@ -48,6 +48,3 @@ pip install opencv-python ultralytics easyocr thefuzz
 ```bash
 python main.py
 ```
-
-## 🧠 Geração de Dataset Sintético
-Para evitar overfitting no treinamento, o projeto conta com um script (`gerar_dataset.py`) que utiliza *Alpha Channel Masking* para mesclar imagens reais dos remédios com texturas aleatórias. Isso permite que a IA reconheça os medicamentos na esteira mesmo com sombras duras, reflexos de iluminação industrial ou sujeira.
