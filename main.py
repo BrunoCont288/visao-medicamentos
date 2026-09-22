@@ -71,15 +71,16 @@ def main() -> None:
             prev_time = curr_time
 
             if frame_count % CONFIG["yolo_skip_frames"] == 0:
-                current_boxes = pipeline.detector.detect(frame)
-                if current_boxes:
+                detections = pipeline.detector.detect(frame)
+                if detections:
+                    current_boxes = [box for box, _conf in detections]
                     last_yolo_boxes = current_boxes
                     last_detection_time = time.time()
                     pipeline.update_boxes(current_boxes)
 
                     # OCR: O pipeline tem uma fila de tamanho 1. Ele processa o mais rápido
                     # possível no plano de fundo. Submetemos o frame em toda detecção.
-                    pipeline.submit_frame(frame, current_boxes)
+                    pipeline.submit_frame(frame, detections)
                 else:
                     # Timeout do YOLO: limpa boxes se não detectou nada físico por N segundos
                     if time.time() - last_detection_time > CONFIG["detection_timeout_s"]:

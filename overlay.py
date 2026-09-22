@@ -42,6 +42,7 @@ class OverlayRenderer:
         # para bounding boxes (AABB) e retângulos rotacionados
         self._smooth_boxes: Dict[int, List[float]] = {}  # idx -> [x1,y1,x2,y2] suavizado
         self._smooth_rotated: Optional[Tuple] = None  # (center, size, angle) suavizado
+        self._last_detected_name: Optional[str] = None  # Nome do último medicamento (para resetar EMA)
 
     # ------------------------------------------------------------------
     # Suavização Temporal (EMA)
@@ -81,6 +82,11 @@ class OverlayRenderer:
             elif diff < -45:
                 diff += 90
             sa = pa + alpha * diff
+            # Normalizar ângulo para o range [-90, 0)
+            while sa < -90:
+                sa += 90
+            while sa >= 0:
+                sa -= 90
         else:
             sc, ss, sa = center, size, angle
 
@@ -145,6 +151,12 @@ class OverlayRenderer:
 
         # --- Desenhar TODAS as bounding boxes do YOLO ---
         identified_box = detection.bbox if detection and detection.status == "IDENTIFICADO" else None
+
+        # Resetar suavização rotacionada se a identidade do medicamento mudou
+        current_name = detection.nome if detection and detection.status == "IDENTIFICADO" else None
+        if current_name != self._last_detected_name:
+            self._smooth_rotated = None
+            self._last_detected_name = current_name
 
         if identified_box is None or (detection and detection.rotated_rect is None):
             self._smooth_rotated = None
@@ -294,6 +306,13 @@ class OverlayRenderer:
         ax1, ay1, ax2, ay2 = box_a
         bx1, by1, bx2, by2 = box_b
 
+        area_a = (ax2 - ax1) * (ay2 - ay1)
+        area_b = (bx2 - bx1) * (by2 - by1)
+
+        # Proteção contra boxes degeneradas (largura ou altura zero)
+        if area_a <= 0 or area_b <= 0:
+            return False
+
         ix1 = max(ax1, bx1)
         iy1 = max(ay1, by1)
         ix2 = min(ax2, bx2)
@@ -303,8 +322,6 @@ class OverlayRenderer:
             return False
 
         inter_area = (ix2 - ix1) * (iy2 - iy1)
-        area_a = (ax2 - ax1) * (ay2 - ay1)
-        area_b = (bx2 - bx1) * (by2 - by1)
-        min_area = min(area_a, area_b) if min(area_a, area_b) > 0 else 1
+        min_area = min(area_a, area_b)
 
         return (inter_area / min_area) >= threshold

@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 CONFIG: Dict = {
     "model_path": "best.pt",
     "database_path": "medicamentos_apsen.json",
-    "camera_index": 0,  # Mudado para 1 (Webcam Externa)
+    "camera_index": 0,  # Índice da câmera (0 = padrão, 1 = webcam externa)
     "camera_width": 1920,
     "camera_height": 1080,
     "target_fps": 30,

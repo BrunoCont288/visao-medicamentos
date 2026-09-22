@@ -10,6 +10,7 @@ Contém:
 
 import time
 import threading
+from dataclasses import replace
 from pathlib import Path
 from queue import Queue, Empty
 from typing import Optional, List, Tuple
@@ -47,6 +48,7 @@ class CameraManager:
             data = np.load(str(cal_path))
             self._mtx = data["mtx"]
             self._dist = data["dist"]
+            # new_mtx será calculada após conhecer a resolução real — vide open()
             logger.info(f"Calibração de lente carregada: {cal_path}")
         else:
             logger.info("Arquivo de calibração não encontrado. Sem correção de distorção.")
@@ -69,6 +71,14 @@ class CameraManager:
 
         real_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         real_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Calcular newCameraMatrix otimizada após saber a resolução real
+        if self._mtx is not None:
+            self._new_mtx, _ = cv2.getOptimalNewCameraMatrix(
+                self._mtx, self._dist, (real_w, real_h), 1, (real_w, real_h)
+            )
+            logger.info("Matriz de câmera otimizada calculada.")
+
         logger.info(f"Camera aberta: {real_w}x{real_h}")
         return True
 
@@ -77,7 +87,8 @@ class CameraManager:
             return False, None
         ret, frame = self._cap.read()
         if ret and frame is not None and self._mtx is not None:
-            frame = cv2.undistort(frame, self._mtx, self._dist, None, self._mtx)
+            new_mtx = self._new_mtx if self._new_mtx is not None else self._mtx
+            frame = cv2.undistort(frame, self._mtx, self._dist, None, new_mtx)
         return ret, frame
 
     def release(self) -> None:
@@ -111,25 +122,26 @@ class Detector:
         self._model = YOLO(str(self._model_path))
         logger.info("Modelo YOLO carregado com sucesso.")
 
-    def detect(self, frame: np.ndarray) -> List[List[int]]:
-        """Executa inferência YOLO e retorna lista de bounding boxes [x1,y1,x2,y2].
+    def detect(self, frame: np.ndarray) -> List[Tuple[List[int], float]]:
+        """Executa inferência YOLO e retorna bounding boxes com confiança.
 
         Args:
             frame: Imagem BGR do OpenCV.
 
         Returns:
-            Lista de bounding boxes [[x1, y1, x2, y2], ...].
+            Lista de tuplas [([x1, y1, x2, y2], confiança), ...].
         """
         if self._model is None:
             return []
 
         results = self._model(frame, conf=self._confidence, verbose=False)
-        boxes: List[List[int]] = []
+        boxes: List[Tuple[List[int], float]] = []
 
         for r in results:
             for b in r.boxes:
                 x1, y1, x2, y2 = map(int, b.xyxy[0])
-                boxes.append([x1, y1, x2, y2])
+                conf = float(b.conf[0])
+                boxes.append(([x1, y1, x2, y2], conf))
 
         return boxes
 
@@ -240,17 +252,17 @@ class VisionPipeline:
         """Thread que processa OCR sem bloquear o loop principal."""
         while self._running:
             try:
-                frame, boxes = self._task_queue.get(timeout=0.5)
+                frame, boxes_with_conf = self._task_queue.get(timeout=0.5)
             except Empty:
                 continue
 
-            if not boxes:
+            if not boxes_with_conf:
                 continue
 
             h, w = frame.shape[:2]
             margin = CONFIG["crop_margin_px"]
 
-            for box in boxes:
+            for box, yolo_conf in boxes_with_conf:
                 x1, y1, x2, y2 = box
                 # Crop com margem segura
                 cx1 = max(0, x1 - margin)
@@ -286,6 +298,7 @@ class VisionPipeline:
                 with self._lock:
                     if det is not None:
                         det.bbox = box
+                        det.confianca_yolo = yolo_conf
                         det.rotated_rect = rotated_rect
                         self._current_detection = det
                         self._debug_text = debug
@@ -294,14 +307,14 @@ class VisionPipeline:
                     else:
                         self._debug_text = debug
 
-    def submit_frame(self, frame: np.ndarray, boxes: List[List[int]]) -> None:
+    def submit_frame(self, frame: np.ndarray, boxes_with_conf: List[Tuple[List[int], float]]) -> None:
         """Envia um frame para processamento OCR (non-blocking)."""
         if self._task_queue.full():
             try:
                 self._task_queue.get_nowait()
             except Empty:
                 pass
-        self._task_queue.put((frame.copy(), boxes))
+        self._task_queue.put((frame.copy(), boxes_with_conf))
 
     @staticmethod
     def _compute_rotated_rect(frame: np.ndarray, box: List[int]) -> Optional[tuple]:
@@ -378,12 +391,41 @@ class VisionPipeline:
         center = (rect[0][0] + rx1, rect[0][1] + ry1)
         return (center, rect[1], rect[2])
 
+    @staticmethod
+    def _compute_iou(box_a: List[int], box_b: List[int]) -> float:
+        """Calcula IoU (Intersection over Union) entre duas bounding boxes."""
+        ax1, ay1, ax2, ay2 = box_a
+        bx1, by1, bx2, by2 = box_b
+
+        ix1 = max(ax1, bx1)
+        iy1 = max(ay1, by1)
+        ix2 = min(ax2, bx2)
+        iy2 = min(ay2, by2)
+
+        if ix1 >= ix2 or iy1 >= iy2:
+            return 0.0
+
+        inter_area = (ix2 - ix1) * (iy2 - iy1)
+        area_a = (ax2 - ax1) * (ay2 - ay1)
+        area_b = (bx2 - bx1) * (by2 - by1)
+        union_area = area_a + area_b - inter_area
+
+        return inter_area / union_area if union_area > 0 else 0.0
+
     def update_boxes(self, boxes: List[List[int]]) -> None:
         """Atualiza as bounding boxes do YOLO (chamado a cada detecção)."""
         with self._lock:
             self._current_boxes = boxes
             if boxes and self._current_detection:
-                self._current_detection.bbox = boxes[0]
+                # Encontrar a box mais próxima da detecção atual por IoU
+                best_box = boxes[0]
+                best_iou = 0.0
+                for b in boxes:
+                    iou = self._compute_iou(self._current_detection.bbox, b)
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_box = b
+                self._current_detection.bbox = best_box
 
     def clear_if_timeout(self) -> None:
         """Limpa a detecção verde se o OCR não validar o texto por N segundos."""
@@ -392,11 +434,15 @@ class VisionPipeline:
             if elapsed > CONFIG["detection_timeout_s"]:
                 self._current_detection = None
                 self._debug_text = "Aguardando..."
+                self._last_successful_rotation = "0"
 
     @property
     def detection(self) -> Optional[Detection]:
+        """Retorna uma cópia thread-safe da detecção atual."""
         with self._lock:
-            return self._current_detection
+            if self._current_detection is None:
+                return None
+            return replace(self._current_detection)
 
     @property
     def boxes(self) -> List[List[int]]:
